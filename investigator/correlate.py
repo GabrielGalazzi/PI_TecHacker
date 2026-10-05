@@ -99,6 +99,22 @@ def _is_root_proc(proc: Process) -> bool:
     return proc.user == "root"
 
 
+def _escalator(proc: Optional[Process]) -> Optional[str]:
+    """Nome do mecanismo de elevação (sudo, su…) que o processo executa, se for um.
+
+    O nome sozinho não basta: com caminho absoluto, o executável precisa estar
+    em um diretório padrão do sistema (um "sudo" em /tmp não é o sudo).
+    """
+    if proc is None:
+        return None
+    name = _basename(proc.exe)
+    if name not in _ESCALATORS:
+        return None
+    if (proc.exe or "").startswith("/") and not proc.exe.startswith(_STANDARD_DIRS):
+        return None
+    return name
+
+
 def _service_processes(snap: Snapshot, svc: Service) -> list[Process]:
     """Processos que são o serviço em execução (mapeamento forte)."""
     procs = [p for p in snap.processes.values()
@@ -427,8 +443,10 @@ def _c2_transition(snap: Snapshot) -> list[Finding]:
                 what = "login" if e.kind == "login" else "sessão aberta"
                 evidence.append(_ev_event(e, f"{what} de {user} em {e.ts}"))
 
-        mechanism = _basename(proc.exe)
-        if mechanism in _ESCALATORS:
+        # O mecanismo é o próprio processo (sudo como root) ou o pai direto: o sudo
+        # atual continua vivo como pai do comando, com o UID real do usuário.
+        mechanism = _escalator(proc) or _escalator(parent)
+        if mechanism:
             findings.append(_finding(
                 "C2", f"Elevação de {user} para root via {mechanism} (PID {proc.pid})",
                 "info", "CONTEXTO_OK", chain, evidence,

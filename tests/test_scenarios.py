@@ -154,6 +154,37 @@ class RuleTest(unittest.TestCase):
         self.assertEqual(_find(findings, "RISCO"), [])
         self.assertTrue(_find(findings, "CONTEXTO_OK", "C2", "sudo"))
 
+    @staticmethod
+    def _live(pid, ppid, user, uid, euid, exe, cmd):
+        row = _proc(pid, ppid, user, cmd)
+        row.update(uid=uid, euid=euid, exe=exe, src=f"/proc/{pid}/status")
+        return row
+
+    def test_live_sudo_parent_is_expected_context(self):
+        # Cadeia real (live): sudo segue vivo como pai, com o UID real do usuário.
+        snap = self._snap([
+            self._live(1, 0, "root", 0, 0, "/usr/lib/systemd/systemd", "/sbin/init"),
+            self._live(100, 1, "aluno", 1000, 1000, "/usr/bin/bash", "bash"),
+            self._live(101, 100, "aluno", 1000, 0, "/usr/bin/sudo", "sudo python3 -m x"),
+            self._live(102, 101, "aluno", 1000, 0, "/usr/bin/sudo", "sudo python3 -m x"),
+            self._live(103, 102, "root", 0, 0, "/usr/bin/python3.10", "python3 -m x"),
+        ])
+        findings = correlate.run(snap)
+        self.assertEqual(_find(findings, "RISCO"), [])
+        self.assertTrue(_find(findings, "CONTEXTO_OK", "C2", "via sudo (PID 103)"))
+
+    def test_sudo_name_outside_system_dirs_is_not_trusted(self):
+        snap = self._snap([
+            self._live(1, 0, "root", 0, 0, "/usr/lib/systemd/systemd", "/sbin/init"),
+            self._live(100, 1, "aluno", 1000, 1000, "/usr/bin/bash", "bash"),
+            self._live(101, 100, "aluno", 1000, 0, "/tmp/sudo", "/tmp/sudo"),
+            self._live(102, 101, "root", 0, 0, "/usr/bin/bash", "bash"),
+        ])
+        findings = correlate.run(snap)
+        self.assertEqual(_find(findings, "CONTEXTO_OK", "C2", "via sudo"), [])
+        # só a fonte "processo": RISCO é rebaixado, mas a transição continua apontada
+        self.assertTrue(_find(findings, "INCONCLUSIVO", "C2", "PID 102"))
+
     def test_curl_name_alone_is_not_a_finding(self):
         # curl de um usuário comum, fora de serviço root: o nome não basta.
         snap = self._snap([

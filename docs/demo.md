@@ -9,7 +9,7 @@ for s in correlation tampered_after_login privileged_service ambiguous \
          user_to_root missing_evidence permission; do
   python3 generate_dataset.py --scenario $s --output training/$s
 done
-python3 -m unittest discover tests        # 49 testes, OK
+python3 -m unittest discover tests        # 51 testes, OK
 ```
 
 ## Parte 1 — o que a ferramenta vê (Galazzi)
