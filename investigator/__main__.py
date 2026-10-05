@@ -1,15 +1,16 @@
 """CLI do Endpoint Investigator.
 
-Criado por Galazzi (coleta/normalização + ``--dump-snapshot``); Sardou estende
-para o fluxo completo collect -> normalize -> correlate -> report.
+Um único comando executa o fluxo completo, sem perguntas ao usuário:
+collect -> normalize -> correlate -> report.
 
-Uso (lado Galazzi):
-    python3 -m investigator --dataset training/correlation --dump-snapshot
-    sudo python3 -m investigator --live --dump-snapshot
+Uso:
+    python3 -m investigator --dataset training/correlation --out reports/correlation
+    sudo python3 -m investigator --live --out reports/live
 
-``--dump-snapshot`` grava ``snapshot.json`` (o Snapshot normalizado) em ``--out``
-e imprime um resumo de contagens. É o que esta metade entrega e permite a Sardou
-inspecionar exatamente o que recebe.
+``--dump-snapshot`` para depois da normalização: grava ``snapshot.json`` (o
+Snapshot que a correlação recebe) em ``--out`` e imprime um resumo de contagens.
+
+Código de saída: 0 = sem RISCO, 1 = ao menos um RISCO, 2 = erro de execução.
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ import sys
 from pathlib import Path
 
 from . import collect_dataset
+from . import correlate
 from . import normalize
+from . import report
 
 
 def _collect(args):
@@ -85,29 +88,22 @@ def main(argv=None) -> int:
         print(f"Erro de coleta: {exc}", file=sys.stderr)
         return 2
 
-    snap = normalize.build_snapshot(raw)
-
-    if args.dump_snapshot:
-        path = _dump_snapshot(snap, out_dir)
-        print(_summary(snap))
-        print(f"\nSnapshot gravado em: {path}")
-        return 0
-
-    # Fluxo completo (Sardou, S4). Import tardio para não exigir os módulos de
-    # análise nesta metade; se ainda não existirem, cai no dump do snapshot.
+    # Uma exceção não tratada sairia com código 1, que aqui significa "há RISCO":
+    # qualquer falha de execução é convertida explicitamente em código 2.
     try:
-        from . import correlate, report  # noqa: F401
-    except ImportError:
-        path = _dump_snapshot(snap, out_dir)
-        print(_summary(snap))
-        print("\n[aviso] módulos de análise (correlate/report) ainda não disponíveis;")
-        print("        execute com --dump-snapshot ou aguarde a Parte 2 (Sardou).")
-        print(f"Snapshot gravado em: {path}")
-        return 0
+        snap = normalize.build_snapshot(raw)
 
-    # Gancho para a Parte 2: correlate.run(snap) -> findings; report.render(...).
-    findings = correlate.run(snap)
-    return report.render(snap, findings, out_dir)
+        if args.dump_snapshot:
+            path = _dump_snapshot(snap, out_dir)
+            print(_summary(snap))
+            print(f"\nSnapshot gravado em: {path}")
+            return 0
+
+        findings, notes = correlate.analyze(snap)
+        return report.render(snap, findings, out_dir, notes)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Erro de execução: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

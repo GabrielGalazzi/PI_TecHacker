@@ -166,6 +166,11 @@ def compute_nonroot_writable(fi: FileInfo, files: dict[str, FileInfo], live: boo
         if parent is None:
             continue
         pw, _ = _self_nonroot_writable(parent, live, group_members)
+        # Sticky bit (ex.: /tmp 1777): só o dono do arquivo ou do diretório remove
+        # ou renomeia entradas, então o+w no diretório não permite substituir um
+        # arquivo de root.
+        if pw and parent.mode & 0o1000 and parent.owner == "root":
+            continue
         if pw:
             return True, f"dir {parent_path} {format(parent.mode, '04o')}"
     return False, ""

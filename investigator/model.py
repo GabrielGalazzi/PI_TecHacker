@@ -122,6 +122,33 @@ class Snapshot:
 
 
 # ---------------------------------------------------------------------------
-# Lado Finding (Sardou — S1). Evidence e Finding são acrescentados aqui.
-# Deixado intencionalmente não implementado: pertence à Parte 2 do plano.
+# Lado Finding (Sardou — S1): o resultado da correlação.
+#
+# A separação pedida pelo enunciado está na própria estrutura: `evidence` só
+# guarda fatos observados (cada um com `src`), enquanto `interpretation`,
+# `hypothesis` e `missing` são campos distintos e não carregam proveniência.
 # ---------------------------------------------------------------------------
+@dataclass
+class Evidence:
+    """Um fato efetivamente observado, com a origem que permite conferi-lo."""
+
+    text: str                      # o que foi observado, sem interpretação
+    src: str                       # proveniência herdada do fato do Snapshot
+    kind: str = ""                 # tipo de fonte: service|process|permission|log|socket
+
+
+@dataclass
+class Finding:
+    """Uma relação entre evidências e o que se pode (ou não) concluir dela."""
+
+    id: str                        # identificador no relatório, ex.: "F-001"
+    title: str                     # resumo de uma linha
+    correlation: str               # correlação que o gerou: "C1".."C4" (ou "C1+C4")
+    severity: str                  # impacto SE a hipótese for verdadeira: alta|média|baixa|info
+    confidence: str                # nº de tipos de fonte independentes: alta(>=3)|média(2)|baixa(1)
+    conclusion: str                # RISCO|CONFIG_INADEQUADA|INCONCLUSIVO|CONTEXTO_OK
+    chain: list[str] = field(default_factory=list)          # cadeia da relação, elo a elo
+    evidence: list[Evidence] = field(default_factory=list)  # o que foi observado
+    interpretation: str = ""       # significado técnico atribuído à evidência
+    hypothesis: str = ""           # possível explicação para a relação encontrada
+    missing: list[str] = field(default_factory=list)        # o que confirmaria ou rejeitaria a hipótese

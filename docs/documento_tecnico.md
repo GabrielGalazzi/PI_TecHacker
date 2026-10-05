@@ -1,8 +1,5 @@
 # Documento Técnico — Endpoint Investigator
 
-> Documento de até 4 páginas (exportar para PDF na entrega). As seções abaixo
-> marcadas *(Sardou)* são preenchidas na Parte 2.
-
 ## Problema
 
 O trabalho pede uma ferramenta que **colete, relacione e interprete** o estado de
@@ -90,17 +87,73 @@ A ferramenta **declara** estas limitações em vez de escondê-las (elas aparece
 
 ## Estratégia de investigação
 
-_(seção de Sardou — Parte 2)_
+A análise parte de uma pergunta por achado: *que relação entre fontes diferentes
+torna este fato relevante?* Um fato isolado — serviço root, arquivo 0777, `curl`
+em execução — nunca é achado. O que se investiga é a combinação **identidade
+privilegiada + recurso utilizado + capacidade de modificação**, exatamente o
+raciocínio de exemplo do enunciado.
+
+Cada achado é registrado em quatro campos separados na própria estrutura de
+dados (`Finding`): **evidência** (fatos observados, cada um com `src`),
+**interpretação** (o significado técnico), **hipótese** (o que isso pode
+explicar) e **evidência ausente** (o que confirmaria ou rejeitaria a hipótese).
+A ferramenta tem quatro conclusões, e duas delas existem para *não* acusar:
+`INCONCLUSIVO`, quando falta evidência, e `CONTEXTO_OK`, quando a relação foi
+verificada e está correta. Um serviço root com script 0700 aparece no relatório
+como verificação sem achado — é assim que se demonstra que "root" não é o gatilho.
+
+A confiança é o número de tipos de fonte independentes que sustentam a relação;
+`RISCO` exige pelo menos dois. O que não pôde ser avaliado é dito: binário de
+sistema sem permissão coletada sai como "não avaliado", nunca como "ok".
 
 ## Principais correlações
 
-_(seção de Sardou — Parte 2)_
+- **C1 — serviço + processo + permissão.** Para cada serviço ativo como root,
+  localiza o processo que o executa (só mapeamento forte: cgroup, MainPID,
+  `ExecStart`, script) e avalia cada caminho referenciado. `nonroot_writable`
+  verdadeiro → RISCO, com a cadeia `serviço → root → PID → arquivo → modo → quem
+  pode gravar`; o diretório-pai gravável conta, e é ele que vira evidência.
+  Permissão ausente em caminho fora do padrão → INCONCLUSIVO.
+- **C2 — processo + PPID + usuário.** Reconstrói a cadeia de ancestralidade com
+  a identidade de cada elo. A direção importa: root → usuário é queda de
+  privilégio (normal); usuário → root sem `sudo`/`su`/`pkexec` na cadeia é RISCO.
+  Filho de serviço root com destino externo em argv é INCONCLUSIVO, citando o log
+  do próprio serviço quando ele descreve a atividade — o nome `curl` não dispara nada.
+- **C3 — arquivo + usuário + uso.** SUID fora dos diretórios padrão é
+  INCONCLUSIVO, informando se algum processo ou serviço o usa; arquivo gravável
+  por todos sem vínculo com execução privilegiada é CONFIG_INADEQUADA.
+- **C4 — processo + serviço + log.** Ordena login não-root, `mtime` e início do
+  serviço. Em `tampered_after_login` a sequência login → modificação → início
+  entra no achado de C1; em `correlation` o `mtime` é anterior ao login, e a
+  ferramenta diz que não há indício de modificação durante a sessão.
+
+Dois ajustes em relação ao plano inicial: o mínimo de duas fontes vale só para
+`RISCO` (exigir duas fontes para dizer "não sei" seria contraditório), e `ssh`/`cron`
+nos datasets saem como "não avaliado", pois suas permissões não foram coletadas.
+A integração com o modo live corrigiu dois falsos positivos da coleta: link
+simbólico lido com modo 0777 e diretório com *sticky bit* (`/tmp`) tratado como
+substituível.
 
 ## Uso de IA
 
-_(seção de Sardou — Parte 2; resumo: IA foi usada como apoio de planejamento e
-codificação; a ferramenta em si não usa LLM.)_
+IA generativa (Claude, via Claude Code) foi usada como apoio durante todo o
+desenvolvimento: planejamento da arquitetura, escrita e revisão de código e
+testes, e redação desta documentação. As regras foram validadas por testes
+automatizados sobre os nove cenários do gerador e por execução no modo live.
+**A ferramenta em si não usa modelo de linguagem**: coleta, normalização e
+correlação são regras determinísticas, e toda conclusão aponta para a evidência
+que a gerou. Não há etapa "DADOS → LLM".
 
 ## Limitações da análise
 
-_(seção de Sardou — Parte 2)_
+- **Condições, não incidentes.** Nenhum achado atribui autoria ou prova
+  exploração; coincidência temporal é descrita como coincidência.
+- **Falsos positivos.** Escrita de grupo conta como gravável por não-root no
+  dataset (não há membros de grupo); um processo root filho de não-root pode vir
+  de mecanismo legítimo que o snapshot não mostra.
+- **Falsos negativos.** Arquivo gravável por todos pode ser executado por cron,
+  timer ou unidade inativa ausente da coleta; processos efêmeros não são vistos.
+- **Heurísticas.** Destino externo é lido de argv; a ligação log ↔ atividade usa
+  palavras-chave. `mtime` e logs podem ser forjados ou rotacionados.
+- **Fora do escopo:** hashes e integridade de pacotes, ACLs e *capabilities*,
+  SELinux/AppArmor, containers, rootkits de kernel (a ferramenta confia em `/proc`).

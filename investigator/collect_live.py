@@ -21,6 +21,7 @@ import json
 import os
 import pwd
 import re
+import stat
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -255,6 +256,17 @@ def _collect_files(processes: list[dict], services: list[dict],
         for path in entry.get("paths", []):
             add(path)
 
+    # Contexto fixo e pequeno (não é varredura): arquivos de identidade do sistema
+    # e binários instalados localmente, onde um SUID fora do padrão apareceria.
+    for path in ("/etc/passwd", "/etc/shadow", "/etc/sudoers"):
+        add(path)
+    for local_dir in ("/usr/local/bin", "/usr/local/sbin"):
+        try:
+            for entry in sorted(os.scandir(local_dir), key=lambda e: e.name):
+                add(entry.path)
+        except OSError:
+            pass
+
     # expande com diretórios-pai e remove duplicatas preservando ordem
     seen: set[str] = set()
     expanded: list[str] = []
@@ -268,6 +280,10 @@ def _collect_files(processes: list[dict], services: list[dict],
     for path in expanded:
         try:
             st = os.lstat(path)
+            if stat.S_ISLNK(st.st_mode):
+                # O modo de um link simbólico é sempre 0777 e o kernel o ignora:
+                # quem decide o acesso são as permissões do alvo.
+                st = os.stat(path)
         except FileNotFoundError:
             continue
         except PermissionError:
@@ -275,7 +291,7 @@ def _collect_files(processes: list[dict], services: list[dict],
             continue
         except OSError:
             continue
-        is_dir = os.path.isdir(path) and not os.path.islink(path)
+        is_dir = stat.S_ISDIR(st.st_mode)
         rows.append({
             "path": path,
             "type": "directory" if is_dir else "file",
